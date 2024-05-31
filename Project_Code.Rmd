@@ -1,0 +1,350 @@
+---
+title: "Time Series Analysis of Unemployment Rate"
+author: "Aaron Harper and Ian Sebby"
+date: "`r Sys.Date()`"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r, echo = F}
+library(forecast)
+library(tseries)
+library(MTS)
+library(scales)
+```
+
+```{r, echo = F}
+Unemployment <- read.csv("UNRATENSA.csv")
+Unemployment <- subset(Unemployment, DATE >= as.Date("1950-01-01") & DATE <= as.Date("2019-10-01"))
+
+Unemployment$UNRATENSA <- as.numeric(Unemployment$UNRATENSA)
+Unemployment$DATE <- as.Date(Unemployment$DATE)
+
+UR <- ts(Unemployment$UNRATENSA, start = c(1950, 1), frequency = 4)
+
+any(diff(time(UR)) > 1)
+```
+
+```{r, echo = F}
+GDP <- read.csv("GDPC1.csv")
+GDP <- subset(GDP, DATE >= as.Date("1950-01-01") & DATE <= as.Date("2019-10-01"))
+
+GDP$GDPC1_PCH <- as.numeric(GDP$GDPC1_PCH)
+GDP$DATE <- as.Date(GDP$DATE)
+
+GDP <- ts(GDP$GDPC1_PCH, start = c(1950, 1), frequency = 4)
+
+any(diff(time(GDP)) > 1)
+```
+
+
+## Question 1
+Our data originates from the U.S. Bureau of Labor Statistics and was accessed through the Federal Reserve Economic Data (FRED), a comprehensive database of economic time series managed by the Research division of the Federal Reserve Bank of St. Louis. The U.S. Bureau of Labor Statistics collects population information, such as employment status, through the Current Population Survey.
+
+
+## Question 2
+The datasets utilized in this analysis comprises of the U.S. unemployment rate and real gross domestic product (GDP). 
+
+Unemployment rate 
+
+According to FRED, "the unemployment rate represents the number of unemployed as a percentage of the labor force. Labor force data are restricted to people 16 years of age and older, who currently reside in 1 of the 50 states or the District of Columbia, who do not reside in institutions (e.g., penal and mental facilities, homes for the aged), and who are not on active duty in the Armed Forces."
+
+Percent change in real GDP
+
+According to FRED, "real gross domestic product is the inflation adjusted value of the goods and services produced by labor and property located in the United States." We are specifically looking at the percent change in real GDP, which measures the change from the previous quarter.
+
+
+## Question 3
+Both variables are measured quarterly, spanning from the first quarter of 1950 to the final quarter of 2023. However, due to the unpredictable impact of the pandemic, the modeling and forecasting of this data will be confined to the period from 1950 to 2019.
+
+
+## Question 4
+```{r, echo = F}
+plot(UR, main="Unemployment Rate", xlab = "", ylab="", yaxt="n")
+axis(2, at=pretty(UR), labels=paste0(format(pretty(UR), nsmall = 0), "%"), las=1)
+
+plot(GDP, main="Percent Change in Real GDP", xlab = "", ylab="", yaxt="n")
+axis(2, at=pretty(GDP), labels=paste0(format(pretty(GDP), nsmall = 0), "%"), las=1)
+```
+
+
+## Question 5
+Unemployment rate will be the primary focus of this analysis because it reflects economic health. It provides insights into topics such as GDP growth, which will be looked at later when trying to improve forecasting accuracy.
+
+
+## Question 6
+```{r}
+mean(UR)
+
+n <- length(UR)
+var <- var(UR)*(n-1)/n
+sqrt(var)
+
+#sqrt( acf(UR, type='covariance',plot=F)$acf[1] )
+```
+The mean unemployment rate over the period examined is about 5.8% and has a standard deviation of 1.7%.
+
+
+## Question 7
+```{r, echo = F}
+acf(UR, type='correlation', main = 'Unemployment Rate Autocorrelation', las=1)
+```
+The ACF plot reveals a consistent decrease in autocorrelation until it becomes insignificant around lag 17. This means we will probably need a transformation to make this time series stationary and we may not need a moving average component during modeling. Additionally, there appears to be very small seasonality present in the plot when examining the quarterly lags. 
+
+
+## Question 8
+```{r}
+decomp_add <- decompose(UR, type = "additive")
+decomp_mult <- decompose(UR, type = "multiplicative")
+```
+
+```{r}
+mape = function(pred,true){
+  return(mean ( abs( (pred - true) / true ) ,na.rm=T))
+}
+```
+
+```{r}
+pred_add <- decomp_add$trend + decomp_add$seasonal
+pred_mult <- decomp_mult$trend * decomp_mult$seasonal
+
+mape(pred_add, UR)
+mape(pred_mult, UR)
+```
+To determine the best modeling approach for seasonality, additive and multiplicative decompositions were applied. Based on the mean absolute percentage error (MAPE), the additive decomposition has a slightly lower error of 2.87% compared to the multiplicative decomposition with 2.95%, suggesting that it may be a better fit for our time series.
+
+
+## Question 9
+```{r, echo = F}
+plot.ts(decomp_add$trend, 
+        main="Additive Trend", 
+        xlab="", ylab="", yaxt="n")
+axis(2, at=pretty(decomp_add$trend), 
+     labels=paste0(format(pretty(decomp_add$trend), nsmall = 0), "%"), las=1)
+
+plot.ts(window(decomp_add$seasonal[1:4]),
+        main="Additive Seasonality",
+        xlab = "", ylab="", yaxt="n", xaxt="n")
+axis(2, at=pretty(decomp_add$seasonal[1:4]), 
+     labels=paste0(format(pretty(decomp_add$seasonal[1:4]), nsmall = 0), "%"), las=1)
+axis(1, at = 1:4, labels = c("QTR 1", "QTR 2", "QTR 3", "QTR 4"))
+```
+
+
+## Question 10
+When looking at the plot of the trend and seasonal components of the additive decomposition, there is not an obvious trend but somewhat frequent ups and downs that spread out overtime. Additionally, the seasonal pattern is very minimal, with only a range of about 0.6% between quarter 1 and quarter 4 of the time series.
+
+
+## Question 11
+```{r}
+adf.test(UR)
+kpss.test(UR)
+```
+The stationarity analysis shows that both an ADF test with a p-value 0.22 and a KPSS test with a p-value of 0.04 suggest the original time series is not stationary. 
+
+```{r}
+UR_diff <- diff(UR)
+
+adf.test(UR_diff)
+kpss.test(UR_diff)
+```
+To address this, a first-order differencing transformation was applied to remove any trend. After first-order differencing, an ADF test p-value of 0.01 and KPSS test p-value of 0.1 suggest the transformed time series is now stationary.
+
+
+## Question 12
+Percent change in real GDP
+
+According to FRED, "real gross domestic product is the inflation adjusted value of the goods and services produced by labor and property located in the United States."
+
+
+## Question 13
+```{r}
+1950 + (0.85 * 280)/4
+
+UR_train <- window(UR, end = c(2010, 4))
+UR_test <- window(UR, start = c(2011, 1))
+```
+The testing data equates to about the last 15% of the time series going from quarter 1 of 2011 to quarter 4 of 2019.
+
+
+## Question 14
+```{r}
+HW_model_train <- HoltWinters(UR_train, seasonal = "additive", alpha = 0.5)
+HW_forecast <- forecast(HW_model_train, h = length(UR_test))
+```
+An additive decomposition-based model using the Holt-Winters method was applied to the training set of the original time series. We altered the value of alpha to place more significance on recent data since unemployment is often reflective of the current economy. This would help capture the short-term changes/trends in unemployment rate more accurately.
+
+
+## Question 15
+```{r, echo = F}
+acf(UR_diff, main = "Differenced Unemployment Rate", las=1)
+pacf(UR_diff, main = "Differenced Unemployment Rate", las=1)
+```
+
+```{r}
+ARIMA_model <- auto.arima(UR_train)
+
+summary(ARIMA_model)
+ARIMA_model$coef
+ARIMA_model$aic
+
+ARIMA_forecast <- forecast(ARIMA_model, h = length(UR_test))
+```
+ARIMA(2,0,0)(0,1,2)[4]
+
+An ARIMA model was fit using the original time series data since it only required first-order differencing. The suggested model included an autoregressive component with a lag of 2 and no moving average component (q lag of 0). Additionally, the model included two seasonal moving average terms with a seasonal period of 4.
+
+
+## Question 16
+```{r}
+Y <- data.frame(Unemployment = UR, GDP = GDP)
+
+acf(Y[,2], main = 'Percent Change in Real GDP', las=1)
+pacf(Y[,2], main = 'Percent Change in Real GDP', las=1)
+adf.test(Y[,2])
+kpss.test(Y[,2])
+
+Y_diff <- data.frame(apply(Y, MARGIN = 2, FUN = diff))
+
+adf.test(Y_diff[,2])
+kpss.test(Y_diff[,2])
+
+Y_diff_ts <- ts(Y_diff, start = c(1950,2), frequency = 4)
+```
+To construct a multivariate forecasting model, the percent change in real GDP was incorporated into the unemployment rate time series to try and improve accuracy. 
+
+Initially, the stationarity of the percent change in real GDP was evaluated. While the ADF test yielded a p-value of 0.01, suggesting stationarity, the KPSS test indicated non-stationarity with a p-value of 0.02. Therefore, differencing was applied, and the tests were repeated, resulting in a stationary time series (ADF test p-value of 0.01 and KPSS test p-value of 0.1).
+
+```{r}
+library(lmtest)
+grangertest(Unemployment ~ GDP, data = Y_diff_ts, order = 24)
+```
+The Granger causality test demonstrated a significant relationship between the unemployment rate and the percent change in GDP. 
+
+```{r}
+Y_diff_train <- window(Y_diff_ts, end = c(2010, 4))
+Y_diff_test <- window(Y_diff_ts, start = c(2011, 1))
+```
+
+```{r}
+Eccm(Y_diff_train, maxp = 3, maxq=3)
+```
+To determine significant VARMA coefficients, the optimal orders of the autoregressive and moving average components were identified. The best orders were found to be (3,1), (3,2), (2,3), and (3,3).
+
+```{r}
+var1 <- VARMA(Y_diff_train, p = 3, q = 1, include.mean=F, details = F)
+var2 <- VARMA(Y_diff_train, p = 3, q = 2, include.mean=F, details = F)
+var3 <- VARMA(Y_diff_train, p = 3, q = 3, include.mean=F, details = F)
+
+var1$aic
+var2$aic
+var3$aic
+```
+
+```{r, echo = F}
+constrained_var <- refVARMA(var1, thres = 2)
+Y_pred <- VARMApred(constrained_var, h = nrow(Y_diff_test))$pred
+```
+Various VARMA models were fitted to the training data using the best orders found and assessed using their AIC. Among these models, the one with an autoregressive term of 3 and a moving average term of 1 exhibited the lowest AIC of -2.26, indicating it was the best fit.
+
+
+## Question 17
+```{r, echo = F}
+plot(UR, main = "Holt-Winters Forecast", 
+     ylab = "Unemployment Rate", xlab = "", yaxt = "n")
+lines(HW_forecast$mean, col = "blue")
+axis(2, at=pretty(UR), labels=paste0(format(pretty(UR), nsmall = 0), "%"), las=1)
+```
+The Holt-Winters forecast projected continual decreases in unemployment rate very similar to what the actual values were. The biggest difference appears to be the very late in the data when actual unemployment began to flatten a bit more.
+
+```{r, echo = F}
+plot(UR, main = "ARIMA Forecast", 
+     ylab = "Unemployment Rate", xlab = "", yaxt="n")
+lines(ARIMA_forecast$mean, col = "blue")
+axis(2, at=pretty(UR), labels=paste0(format(pretty(UR), nsmall = 0), "%"), las=1)
+```
+The ARIMA predictions captured some of the continuing decrease in unemployment rate after 2010. However, the forecast also leveled off early around 2014 when unemployment continued to decrease through 2019.
+
+```{r, echo = F}
+Y_real <- rbind(Y[1,],Y_diff_train, Y_diff_test)
+Y_pred2 <- rbind(Y[1,],Y_diff_train, Y_pred)
+
+Y_real <- apply(Y_real, MARGIN = 2, FUN = cumsum)
+Y_pred2 <- apply(Y_pred2, MARGIN = 2, FUN = cumsum)
+```
+
+```{r, echo = F}
+plot.ts(Y_pred2[, 1], main = "VARMA Forecast", xlab = "", ylab = "Unemployment Rate", 
+        xaxt = "n", yaxt = "n")
+
+axis(2, at=pretty(Y_real[, 1]), labels=paste0(format(pretty(Y_real[, 1]), nsmall = 0), "%"), las=1)
+axis(1, at = c(1, 40, 80, 120, 160, 200, 240, 280), 
+     labels = c("1950", "1960", "1970", "1980", "1990", "2000", "2010", "2020"))
+abline(v=nrow(Y_diff_train), col = "blue")
+```
+The VARMA predictions show unemployment rate leveling off and staying at a high level. 
+
+
+## Question 18
+```{r}
+#Holt-Winters
+mape(HW_forecast$fitted, UR_train)
+mape(HW_forecast$mean, UR_test)
+
+#ARIMA
+mape(ARIMA_forecast$fitted, UR_train)
+mape(ARIMA_forecast$mean, UR_test)
+
+#VARMA
+residuals <- var1$residuals[,1]
+fitted <- Y_diff_train[4:243,1] - residuals
+error <- abs((fitted - Y_diff_train[4:243,1]) / Y_diff_train[4:243,1])
+error_filtered <- error[is.finite(error)]
+mean(error_filtered, na.rm = T)
+
+mape(Y_pred2[245:280,1], Y_real[245:280,1])
+```
+When comparing all three models based on their MAPE, the Holt-Winters model had the lowest errors of about 7.4% for the in-sample and about 8.7% for the out-of-sample predictions.
+
+
+## Post Covid
+```{r, echo = F}
+Unemployment <- read.csv("UNRATENSA.csv")
+UnemploymentCovid <- subset(Unemployment, DATE >= as.Date("1950-01-01") & DATE <= as.Date("2023-10-01"))
+UnemploymentCovid$UNRATENSA <- as.numeric(UnemploymentCovid$UNRATENSA)
+UnemploymentCovid$DATE <- as.Date(UnemploymentCovid$DATE)
+
+URPC <- ts(UnemploymentCovid$UNRATENSA, start = c(1950, 1), frequency = 4)
+
+1950 + (0.85 * 296)/4
+URPC_train <- window(URPC, end = c(2012, 4))
+URPC_test <- window(URPC, start = c(2013, 1))
+```
+
+```{r}
+HW_model_train <- HoltWinters(URPC_train, seasonal = "additive", alpha = 0.5)
+HW_forecast <- forecast(HW_model_train, h = length(URPC_test))
+
+mape(HW_forecast$fitted, URPC_train)
+mape(HW_forecast$mean, URPC_test)
+```
+
+```{r, echo = F}
+plot(URPC, main = "Holt-Winters Forecast Through Pandemic", 
+     ylab = "Unemployment Rate", xlab = "", yaxt = "n")
+lines(HW_forecast$mean, col = "blue")
+axis(2, at=pretty(URPC), labels=paste0(format(pretty(URPC), nsmall = 0), "%"), las=1)
+```
+We also wanted to fit models to our data with a longer time frame extending from 1950-2023. This way we can see how our best performing models predicted through the pandemic. The Holt-Winters forecast begins to capture some of the decreasing unemployment rate but fails to capture the unexpected spike in 2020 that was the start of the pandemic. This model has an out-of-sample error of about 23.9% which is higher than our initial Holt-Winters model that excluded COVID.
+
+
+## Data Sources
+
+U.S. Bureau of Labor Statistics, Unemployment Rate [UNRATE], retrieved from FRED, Federal 
+Reserve Bank of St. Louis; https://fred.stlouisfed.org/series/UNRATE, February 28, 
+2024.
+
+U.S. Bureau of Economic Analysis, Real Gross Domestic Product [GDPC1], retrieved from 
+FRED, Federal Reserve Bank of St. Louis; https://fred.stlouisfed.org/series/GDPC1, 
+February 29, 2024.
